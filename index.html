@@ -1,0 +1,439 @@
+<!doctype html>
+<head>
+<meta charset="utf-8">
+<title>OBSvideomixer</title>
+<link rel="shortcut icon" type="image/png" href="images/obsicon.png"/>
+<script type="text/javascript" src="sha256.js"></script>
+<script>
+	window.addEventListener("load", init, false);
+
+	var serverip = "127.0.0.1:4444";
+
+	var socketisOpen = 0;
+	var authfail = 0;
+	var intervalID = 0;
+	var pass = "";
+	var StudioMode = 0;
+	var pgmscene = "";
+	var pvwscene = "";
+	var currenttransition = "";
+	var trans_duration=350;
+	var btn_margin=10;
+
+	var requestSceneList = {
+		"request-type" : "GetSceneList",
+		"message-id" : "getSceneList"
+	};
+	var getStudioModeStatus = {
+		"request-type" : "GetStudioModeStatus",
+		"message-id" : "GetStudioModeStatus"
+	};
+	var gettransitionlist = {
+		"request-type": "GetTransitionList",
+		"message-id" : "GetTransitionList"
+	};
+	var setcurrenttransition = {
+		"request-type": "SetCurrentTransition",
+		"message-id" : "SetCurrentTransition",
+		"transition-name" : "Cut"
+	};
+	var getauthrequired = {
+		"request-type" : "GetAuthRequired" ,
+		"message-id" : "1"
+	};
+	
+	function enterFullscreen(element) {
+		if (element.requestFullscreen) {
+			element.requestFullscreen();
+		} else if (element.mozRequestFullScreen) {
+			element.mozRequestFullScreen();
+		} else if (element.msRequestFullscreen) {
+			element.msRequestFullscreen();
+		} else if (element.webkitRequestFullscreen) {
+			element.webkitRequestFullscreen();
+		}
+	}
+	
+	function closeFullscreen() {
+		if (document.exitFullscreen) {
+			document.exitFullscreen();
+		} else if (document.mozCancelFullScreen) { /* Firefox */
+			document.mozCancelFullScreen();
+		} else if (document.webkitExitFullscreen) { /* Chrome, Safari and Opera */
+			document.webkitExitFullscreen();
+		} else if (document.msExitFullscreen) { /* IE/Edge */
+			document.msExitFullscreen();
+		}
+	}
+
+	function updateScenes() {
+		sendCommand(JSON.stringify(requestSceneList));
+		sendCommand(JSON.stringify(getStudioModeStatus));
+		sendCommand(JSON.stringify(gettransitionlist));
+		document.getElementById("settingsbox").style.display = "none";
+		document.getElementById("pgm_bars").style.display = "block";
+		document.getElementById("transition").style.display = "block";
+	}
+
+	function setAdress() {
+		enterFullscreen(document.documentElement);
+		serverip = document.getElementById('serverIP').value;
+		pass = document.getElementById('pass').value;
+		doConnect();
+	}
+
+	function init() {
+		document.getElementById('serverIP').value = serverip;
+		document.getElementById("pgm_bars").style.display = "none";
+		document.getElementById("pvw_bars").style.display = "none";
+		document.getElementById("transition").style.display = "none";
+		document.getElementsByClassName("info")[1].style.display = "none";
+	}
+
+	function sendCommand(p1) {
+		if (socketisOpen) {
+			websocket.send(p1);
+		} else {
+			console.log('Fail: Not connected\n');
+		}
+	}
+
+	function event(data) {
+		var jsonOBJ = JSON.parse(data);
+		if (jsonOBJ.hasOwnProperty("message-id")) {
+			if (jsonOBJ["authRequired"]) {
+				shaObj  = new jsSHA('SHA-256', 'TEXT');
+				shaObj.update(pass+jsonOBJ["salt"]);
+				secret = shaObj.getHash("B64");
+				shaObj  = new jsSHA('SHA-256', 'TEXT');
+				shaObj.update(secret+jsonOBJ["challenge"]);
+				auth_response = shaObj.getHash("B64");
+				authenticate = {"request-type" : "Authenticate" , "message-id" : "2" , "auth" : auth_response};
+				sendCommand(JSON.stringify(authenticate));
+				updateScenes();
+			} else if (jsonOBJ["authRequired"] == false) {
+				updateScenes();
+			} else if (jsonOBJ["error"] == "Authentication Failed.") {
+				authfail = 1;
+				websocket.close();
+				document.getElementById("pgm_bars").style.display = "none";
+				document.getElementById("pvw_bars").style.display = "none";
+				document.getElementById("transition").style.display = "none";
+				document.getElementById("settingsbox").style.display = "block";
+				document.getElementsByClassName("info")[0].style.display = "none";
+				document.getElementsByClassName("info")[1].style.display = "block";
+				closeFullscreen()
+				//location.reload(true);
+			} else if (jsonOBJ["message-id"] == "getSceneList") {
+				generateScenes(jsonOBJ["scenes"]);
+				pgmscene = jsonOBJ["current-scene"];
+				redthis(document.getElementById("pgm_"+pgmscene));
+			} else if (jsonOBJ["message-id"] == "GetStudioModeStatus") {
+				StudioMode = jsonOBJ["studio-mode"];
+				if (StudioMode) {
+					document.getElementById("pvw_bars").style.display = "block";
+				}
+			} else if (jsonOBJ["message-id"] == "GetTransitionList") {
+				generateTransitions(jsonOBJ["transitions"]);
+				currenttransition = jsonOBJ["current-transition"];
+				goldthis(document.getElementById("trans_"+currenttransition));
+			} else {
+				//document.write(JSON.stringify(jsonOBJ));
+			}
+		} else if (jsonOBJ.hasOwnProperty("update-type")) {
+			if (jsonOBJ["update-type"] == "PreviewSceneChanged") {
+				pvwscene = jsonOBJ["scene-name"];
+				greenthis(document.getElementById("pvw_"+pvwscene));
+			} else if (jsonOBJ["update-type"] == "SwitchScenes") {
+				pvwscene = pgmscene;
+				greenthis(document.getElementById("pvw_"+pvwscene));
+				pgmscene = jsonOBJ["scene-name"];
+				redthis(document.getElementById("pgm_"+pgmscene));
+			} else if (jsonOBJ["update-type"] == "TransitionBegin") {
+				redthis2(document.getElementById("pgm_"+pvwscene));
+			} else if (jsonOBJ["update-type"] == "SwitchTransition") {
+				currenttransition = jsonOBJ["transition-name"];
+				goldthis(document.getElementById("trans_"+currenttransition));
+			} else if (jsonOBJ["update-type"] == "TransitionDurationChanged") {
+				trans_duration = jsonOBJ["new-duration"];
+			} else if (jsonOBJ["update-type"] == "StudioModeSwitched") {
+				if (jsonOBJ["new-state"]) {
+					StudioMode = true;
+					document.getElementById("pvw_bars").style.display = "block";
+				} else {
+					StudioMode = false;
+					document.getElementById("pvw_bars").style.display = "none";
+				}
+			}
+			else {
+				//document.write(JSON.stringify(jsonOBJ));
+			}
+		}
+	}
+
+	function generateScenes(list) {
+		for (i = 0; i < list.length; i++) {
+			document.getElementById("buttons_PGM").innerHTML+="<input class='buttonscene classicbutton buttonscenepgm' style='margin: "+btn_margin+"px "+btn_margin+"px;' id='pgm_"+list[i]["name"]+"' onclick='switch_pgm(this);' type='submit' name='"+list[i]["name"]+"' value='"+list[i]["name"]+"'/>";
+			document.getElementById("buttons_PVW").innerHTML+="<input class='buttonscene classicbutton buttonscenepvw' style='margin: "+btn_margin+"px "+btn_margin+"px;' id='pvw_"+list[i]["name"]+"' onclick='switch_pvw(this);' type='submit' name='"+list[i]["name"]+"' value='"+list[i]["name"]+"'/>";
+		}
+	}
+
+		function generateTransitions(list) {
+		for (i = 0; i < list.length; i++) {
+			var transname_quotes='"'+list[i]["name"]+'"';
+			document.getElementById("buttons_TRANS").innerHTML+="<input class='buttonscene classicbutton buttontrans' style='margin: "+btn_margin+"px "+btn_margin+"px;' id='trans_"+list[i]["name"]+"' onclick='cut("+transname_quotes+");' type='submit' name='"+list[i]["name"]+"' value='"+list[i]["name"]+"'/>"
+		}
+	}
+	
+	function changeElement(id, newContent) {
+		document.getElementById(id).innerHTML = newContent
+	}
+
+	function doConnect() {
+		websocket = new WebSocket("ws://" + serverip);
+		websocket.onopen = function(evt) {
+			onOpen(evt)
+		};
+		websocket.onclose = function(evt) {
+			onClose(evt)
+		};
+		websocket.onmessage = function(evt) {
+			onMessage(evt)
+		};
+		websocket.onerror = function(evt) {
+			onError(evt)
+		};
+	}
+
+	function onClose(evt) {
+		socketisOpen = 0;
+		if (!authfail){
+			if (!intervalID) {
+				intervalID = setInterval(doConnect, 5000);
+			}
+		}
+	}
+
+	function onOpen(evt) {
+		socketisOpen = 1;
+		clearInterval(intervalID);
+		intervalID = 0;
+		sendCommand(JSON.stringify(getauthrequired));
+	}
+
+	function onMessage(evt) {
+		event(evt.data);
+	}
+
+	function onError(evt) {
+		socketisOpen = 0;
+		if (!intervalID) {
+			intervalID = setInterval(doConnect, 5000);
+		}
+	}
+
+	function doDisconnect() {
+		socketisOpen = 0;
+		websocket.close();
+	}
+
+	function redthis(elem)
+	{
+		var buttonsscenepgm=document.getElementsByClassName("buttonscenepgm");
+		for(var i=0;i<buttonsscenepgm.length;i++)
+		{
+			buttonsscenepgm[i].classList.add("classicbutton")
+		}
+		elem.classList.remove("classicbutton");elem.classList.add("redbutton")
+	}
+
+	function redthis2(elem)
+	{
+		elem.classList.remove("classicbutton");elem.classList.add("redbutton")
+	}
+
+	function greenthis(elem)
+	{
+		var buttonsscenepvw=document.getElementsByClassName("buttonscenepvw");
+		for(var i=0;i<buttonsscenepvw.length;i++)
+		{
+			buttonsscenepvw[i].classList.add("classicbutton")
+		}
+		elem.classList.remove("classicbutton");
+		elem.classList.add("greenbutton");
+	}
+	
+	function goldthis(elem)
+	{
+		var buttonsscenetrans=document.getElementsByClassName("buttontrans");
+		for(var i=0;i<buttonsscenetrans.length;i++)
+		{
+			buttonsscenetrans[i].classList.add("classicbutton")
+		}
+		elem.classList.remove("classicbutton");
+		elem.classList.add("goldbutton");
+	}
+	
+	function switch_pgm(scenename)
+	{
+
+		message = {"request-type" : "SetCurrentScene" , "message-id" : "SetCurrentScene" , "scene-name" : scenename.value};
+		sendCommand(JSON.stringify(message));
+	}
+	
+	function switch_pvw(scenename)
+	{
+		message = {"request-type" : "SetPreviewScene" , "message-id" : "SetPreviewScene" , "scene-name" : scenename.value};
+		sendCommand(JSON.stringify(message));
+	}
+
+	function cut(trans_type)
+	{
+		if (StudioMode) {
+			var transition={"request-type" : "TransitionToProgram" , "message-id" : "TransitionToProgram" ,"with-transition":{"name":trans_type,"duration":trans_duration}};
+			sendCommand(JSON.stringify(transition));
+		} else {
+			var transition={"request-type" : "SetCurrentTransition" , "message-id" : "SetCurrentTransition" ,"transition-name":trans_type};
+			sendCommand(JSON.stringify(transition));
+		}
+	}
+	
+</script>
+<style>
+html {
+	height: 100%;
+	width: 100%;
+}
+body {
+	height: 100%;
+	width: 100%;
+	overflow: hidden;
+	font-family: monospace;
+}
+h1{
+	color: rgb(105,105,105);
+	font-weight: bold;
+	margin: 0px 0;
+	font-size: 1.3rem;
+}
+h2{
+	font-weight: bold;
+}
+#settingsbox {
+	margin: 20px;
+}
+button {
+	margin: 8px;
+	font-size: 1.5em;
+}
+label {
+	display: inline-block;
+	font-size: 2em;
+	margin: 8px;
+	width:300px;
+	text-align: left;
+}
+input {
+	margin: 8px;
+	font-size: 1.5em;
+}
+@media screen and (max-width: 900px) {
+		#buttons_TRANS{
+			width: 140px;
+	}
+	.pgm_pvw_bars{
+		width: calc(100% - 210px);
+	}
+}
+@media screen and (max-width: 790px) {
+		#buttons_TRANS{
+			width: auto;
+		}
+		.pgm_pvw_bars{
+			width: auto;
+		}
+}
+.transition{
+	float: right;
+}
+.info{
+	color: rgb(200,0,0);
+}
+#buttons_PGM, #buttons_PVW, #buttons_TRANS{
+	background-color: rgb(34,34,34);
+	padding: 1rem;
+	display: inline-block;
+	border: 3px solid rgb(25,25,25);
+	border-radius: 10px;
+}
+#buttons_TRANS{
+	width: 240px;
+}		
+.pgm_pvw_bars{
+	width: calc(100% - 350px);
+	float: left;
+}
+.buttonscene{
+	display: inline-block;
+	width: 100px;
+	height: 100px;
+	background-image: url(images/blank_button.png);
+	border: none;
+	text-align: center;
+	font-weight: bold;
+	outline:none;
+	cursor: pointer;
+	font-size: 1rem;
+}
+.greenbutton{
+	background-color:  rgb(34,34,34);
+	background-image: url(images/blank_green_button.png);
+	background-size: 100px 100px;
+	box-shadow: 0px 0px 30px rgb(0,255,0);
+}
+.redbutton{
+	background-color:  rgb(34,34,34);
+	background-image: url(images/blank_red_button.png);
+	box-shadow: 0px 0px 30px rgb(255,0,0);
+	background-size: 100px 100px;
+}
+.goldbutton{
+	background-color:  rgb(34,34,34);
+	background-image: url(images/blank_yellow_button.png);
+	box-shadow: 0px 0px 30px rgb(255,255,0);
+	background-size: 100px 100px;
+}
+.classicbutton{
+	background-color:  rgb(34,34,34);
+	background-image: url(images/blank_button.png);
+	background-size: 100px 100px;
+	box-shadow:none;
+}
+</style>
+<meta name="viewport" content="width=device-width, initial-scale=0.8"/>
+</head>
+<body><div>
+	<div class="settingsbox" id="settingsbox">
+		<h2 class="info">No connection to OBS.<br/><h2/>
+		<h2 class="info">Wrong password.<br/><h2/>
+		<label for="serverip">Host + port:</label>
+		<input type="text" id="serverIP"><br>
+		<label for="pass">Password:</label>
+		<input type="text" id="pass"><br>
+		<button type="button" onclick="setAdress();">Connect to Server</button>
+	</div>
+	<div class="pgm_pvw_bars" id="pgm_pvw_bars" style="display: inline-block;">
+		<div class="pgm_bars" id="pgm_bars">
+			<h1 id="pgm_title">Program</h1>
+			<div id="buttons_PGM"></div>
+		</div>
+		<div class="pvw_bars" id="pvw_bars">
+			<h1 id="pvw_title">Preview</h1>
+			<div id="buttons_PVW"></div>
+		</div>
+	</div>
+	<div class="transition" id="transition">
+		<h1>Transition <class="transition_input"/></h1>
+		<div id="buttons_TRANS"></div>
+	</div>
+</div></body>
