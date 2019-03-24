@@ -6,7 +6,6 @@
 <script type="text/javascript" src="sha256.js"></script>
 <script>
 	window.addEventListener("load", init, false);
-
 	var serverip = "127.0.0.1:4444";
 
 	var socketisOpen = 0;
@@ -19,7 +18,12 @@
 	var currenttransition = "";
 	var trans_duration=350;
 	var btn_margin=10;
+	var replay = 0;
 
+	var getauthrequired = {
+		"request-type" : "GetAuthRequired" ,
+		"message-id" : "1"
+	};
 	var requestSceneList = {
 		"request-type" : "GetSceneList",
 		"message-id" : "getSceneList"
@@ -37,11 +41,11 @@
 		"message-id" : "SetCurrentTransition",
 		"transition-name" : "Cut"
 	};
-	var getauthrequired = {
-		"request-type" : "GetAuthRequired" ,
-		"message-id" : "1"
+	var getpreviewscene = {
+		"request-type" : "GetPreviewScene" ,
+		"message-id" : "GetPreviewScene"
 	};
-	
+
 	function enterFullscreen(element) {
 		if (element.requestFullscreen) {
 			element.requestFullscreen();
@@ -123,7 +127,6 @@
 				document.getElementsByClassName("info")[0].style.display = "none";
 				document.getElementsByClassName("info")[1].style.display = "block";
 				closeFullscreen()
-				//location.reload(true);
 			} else if (jsonOBJ["message-id"] == "getSceneList") {
 				generateScenes(jsonOBJ["scenes"]);
 				pgmscene = jsonOBJ["current-scene"];
@@ -132,11 +135,17 @@
 				StudioMode = jsonOBJ["studio-mode"];
 				if (StudioMode) {
 					document.getElementById("pvw_bars").style.display = "block";
+					sendCommand(JSON.stringify(getpreviewscene));
 				}
 			} else if (jsonOBJ["message-id"] == "GetTransitionList") {
 				generateTransitions(jsonOBJ["transitions"]);
 				currenttransition = jsonOBJ["current-transition"];
 				goldthis(document.getElementById("trans_"+currenttransition));
+			} else if (jsonOBJ["message-id"] == "GetPreviewScene") {
+				pvwscene = jsonOBJ["name"];
+				greenthis(document.getElementById("pvw_"+pvwscene));
+			} else if (jsonOBJ["message-id"] == "SaveReplayBuffer") {
+				replaybufferstatus = jsonOBJ["status"];
 			} else {
 				//document.write(JSON.stringify(jsonOBJ));
 			}
@@ -175,14 +184,22 @@
 		for (i = 0; i < list.length; i++) {
 			document.getElementById("buttons_PGM").innerHTML+="<input class='buttonscene classicbutton buttonscenepgm' style='margin: "+btn_margin+"px "+btn_margin+"px;' id='pgm_"+list[i]["name"]+"' onclick='switch_pgm(this);' type='submit' name='"+list[i]["name"]+"' value='"+list[i]["name"]+"'/>";
 			document.getElementById("buttons_PVW").innerHTML+="<input class='buttonscene classicbutton buttonscenepvw' style='margin: "+btn_margin+"px "+btn_margin+"px;' id='pvw_"+list[i]["name"]+"' onclick='switch_pvw(this);' type='submit' name='"+list[i]["name"]+"' value='"+list[i]["name"]+"'/>";
+			if (list[i]["name"] == "Replay") {
+				replay = 1;
+			}
 		}
 	}
 
-		function generateTransitions(list) {
-		for (i = 0; i < list.length; i++) {
+	function generateTransitions(list) {
+		for (i = 0; i < (list.length); i++) {
 			var transname_quotes='"'+list[i]["name"]+'"';
-			document.getElementById("buttons_TRANS").innerHTML+="<input class='buttonscene classicbutton buttontrans' style='margin: "+btn_margin+"px "+btn_margin+"px;' id='trans_"+list[i]["name"]+"' onclick='cut("+transname_quotes+");' type='submit' name='"+list[i]["name"]+"' value='"+list[i]["name"]+"'/>"
+			document.getElementById("buttons_TRANS").innerHTML+="<input class='buttonscene classicbutton buttontrans' style='margin: "+btn_margin+"px "+btn_margin+"px;' id='trans_"+list[i]["name"]+"' onclick='cut("+transname_quotes+");' type='submit' name='"+list[i]["name"]+"' value='"+list[i]["name"]+"'/>";
 		}
+		if (replay == 1) {
+			document.getElementById("buttons_TRANS").innerHTML+="<input class='buttonscene2' style='margin: "+btn_margin+"px "+btn_margin+"px;' id='trans2_'  type='submit' name='2' value=''/>";
+			document.getElementById("buttons_TRANS").innerHTML+="<input class='buttonscene2' style='margin: "+btn_margin+"px "+btn_margin+"px;' id='trans3_'  type='submit' name='3' value=''/>";
+			document.getElementById("buttons_TRANS").innerHTML+="<input class='replay' style='margin: "+btn_margin+"px "+btn_margin+"px;' id='trans_replay' onclick='start_replay()' type='submit' name='Replay' value='Start Replay'/>";
+			}
 	}
 	
 	function changeElement(id, newContent) {
@@ -237,6 +254,19 @@
 		websocket.close();
 	}
 
+	function start_replay() {
+		savereplaybuffer = {"request-type" : "SaveReplayBuffer" , "message-id" : "SaveReplayBuffer" };
+		sendCommand(JSON.stringify(savereplaybuffer));
+		//wait 2 sec for saving replaybuffer
+		var start = new Date().getTime();
+		for (var i = 0; i < 1e7; i++) {
+			if ((new Date().getTime() - start) > 2000){
+				break;
+			}
+		}
+		switch_pgm({"value":"Replay"});
+	}
+	
 	function redthis(elem)
 	{
 		var buttonsscenepgm=document.getElementsByClassName("buttonscenepgm");
@@ -383,6 +413,31 @@ input[type="submit"] {
 	width: 100px;
 	height: 100px;
 	background-image: url(images/blank_button.png);
+	border: none;
+	text-align: center;
+	font-weight: bold;
+	outline:none;
+	cursor: pointer;
+	font-size: 1rem;
+}
+.buttonscene2{
+	background-color: rgb(34,34,34);
+	display: inline-block;
+	width: 100px;
+	height: 100px;
+	border: none;
+	text-align: center;
+	font-weight: bold;
+	outline:none;
+	cursor: pointer;
+	font-size: 1rem;
+}
+.replay{
+	background-color: rgb(34,34,34);
+	display: inline-block;
+	width: 100px;
+	height: 100px;
+	background-image: url(images/blank_blue_button.png);
 	border: none;
 	text-align: center;
 	font-weight: bold;
